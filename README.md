@@ -15,4 +15,13 @@ https://github.com/NixOS/nixpkgs/labels?q=approvals+
 
 set `GITHUB_BOT_TOKEN` or `GITHUB_TOKEN` to a github token with permissions to add labels
 
-```nix run```
+```bash
+nix run
+```
+
+
+## Reasoning
+
+github doesn't have a way to show approvals made by non-committers.
+
+i created this to give non-committers a way to help committers.
