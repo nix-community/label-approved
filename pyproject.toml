@@ -1,0 +1,71 @@
+[tool.poetry]
+name = "label-approved"
+version = "0.1.0"
+description = ""
+#readme = "README.md"
+license = "MIT"
+authors = ["Artturin <Artturin@artturin.com>"]
+
+[tool.poetry.scripts]
+label-approved = 'label_approved.cli:main'
+
+[tool.poetry.dependencies]
+python = "^3.10"
+PyGithub = "^1.55"
+
+[tool.poetry.dev-dependencies]
+pytest = "^6.2.5"
+pytest-cov = "^3.0.0"
+coverage = {extras = ["toml"], version = "^6.2"}
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.mypy]
+strict = true
+
+# for the nixpkgs package as some of these types aren't in nixpkgs
+[[tool.mypy.overrides]]
+module = [
+    "pytest"
+]
+ignore_missing_imports = true
+
+
+[tool.black]
+line-length = 120
+target_version = ['py310']
+
+[tool.pylint.master]
+init-hook = "import sys; sys.path.append('src')"
+
+[tool.pylint.FORMAT]
+output-format = "colorized"
+max-line-length = 120
+
+[tool.pylint.messages_control]
+disable = [
+    # Many functions (e.g. callbacks) will naturally have unused arguments.
+    "unused-argument",
+
+    # Disable failure for TODO items in the codebase (code will always have TODOs).
+    "fixme",
+
+    "missing-docstring"
+]
+
+[tool.coverage.paths]
+source = ["src"]
+
+[tool.coverage.run]
+branch = true
+source = ["label_approved"]
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.pytest.ini_options]
+# tests, src so that the nix shell doesn't have to be restarted
+testpaths = ["tests", "src"]
+addopts = "-sv"
