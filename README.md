@@ -1,3 +1,5 @@
+# Label approved
+
 adds one of 3 labels to a approved commit
 
 ```
@@ -9,6 +11,8 @@ adds one of 3 labels to a approved commit
 https://github.com/NixOS/nixpkgs/labels?q=approvals+
 
 
-=== running ===
+## Usage
+
+set `GITHUB_BOT_TOKEN` or `GITHUB_TOKEN` to a github token with permissions to add labels
 
 ```nix run```
