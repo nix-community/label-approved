@@ -46,8 +46,9 @@ def main() -> None:
     g_h = Github(ghtoken())
     query: list[str] = [
         "author:r-ryantm",
+        "pyinfra"
         #'label:"6.topic: kernel"',
-        'label:"10.rebuild-linux: 1-10"',
+        #'label:"10.rebuild-linux: 1-10"',
         #'-label:"10.rebuild-linux: 1-10"'
         '-label:"12.approvals: 1"',
         '-label:"12.approvals: 2"',
@@ -75,7 +76,10 @@ def main() -> None:
                     gist = g_h.get_gist(gist_id)
                     pot_maint_file_contents = gist.files["Potential Maintainers"].content
                     for line in pot_maint_file_contents.splitlines():
-                        maintainers.append(line.split(":")[-1].strip())
+                        if line == "Maintainers:":
+                            continue
+                        maintainer = line.split(":")[0].strip()
+                        maintainers.append(maintainer)
 
         p_r_reviews = list(p_r.get_reviews())
 
