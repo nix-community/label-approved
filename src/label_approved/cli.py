@@ -52,12 +52,12 @@ def main() -> None:
     g_h = Github(ghtoken())
     query: list[str] = [
         # "author:r-ryantm",
-        #'label:"6.topic: kernel"',
         #'label:"10.rebuild-linux: 1-10"',
         #'-label:"10.rebuild-linux: 1-10"'
-        'label:"12.approvals: 1"',
-        '-label:"12.approvals: 2"',
-        '-label:"12.approvals: 3+',
+        #'label:"12.approvals: 1"',
+        #'-label:"12.approvals: 2"',
+        #'-label:"12.approvals: 3+',
+        #"base:staging",
         "sort:updated-desc",
         "draft:false",
         "is:pr",
@@ -71,6 +71,7 @@ def main() -> None:
     logging.info("Pulls total: %s", pulls.totalCount)
     for p_r_as_issue in pulls:
         p_r = p_r_as_issue.as_pull_request()
+        logging.info("Processing %s", p_r.number)
 
         last_commit = list(p_r.get_commits())[-1]
         statuses = last_commit.get_statuses()
@@ -96,15 +97,15 @@ def main() -> None:
 
         pr_labels = list(p_r.get_labels())
         pr_label_by_name = {label.name: label for label in pr_labels}
-        old_approval_count = [k for k, v in label_dict.items() if v in pr_label_by_name][0]
+        old_approval_count = 0
+        if o_a_c := [k for k, v in label_dict.items() if v in pr_label_by_name]:
+            old_approval_count = o_a_c[0]
 
         pr_object = PrWithApprovals(p_r, approval_count, old_approval_count)
         logging.debug(pr_object)
 
         if pr_object.same_as_before():
             continue
-
-        print(pr_object)
 
         p_r_url = pr_object.p_r.html_url
         p_r_num = pr_object.p_r.number
