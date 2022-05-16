@@ -124,27 +124,30 @@ def main() -> None:
             logging.info("lastappdate: %s", last_approved_review_date)
             logging.info("lastcommitdate: %s", last_commit_date)
             if last_commit_date > last_approved_review_date:
-                label_to_remove = label_dict[pr_object.previous_label]
-                logging.info("Removing label '%s' from PR: '%s' %s", label_to_remove, p_r_num, p_r_url)
-                if not dry_run:
-                    pr_object.p_r.remove_from_labels(label_to_remove)
+                if pr_object.previous_label != 0:
+                    label_to_remove = label_dict[pr_object.previous_label]
+                    logging.info("Removing label '%s' from PR: '%s' %s", label_to_remove, p_r_num, p_r_url)
+                    if not dry_run:
+                        pr_object.p_r.remove_from_labels(label_to_remove)
                 continue
 
 
         if pr_object.same_as_before():
             continue
 
-        if pr_object.previous_label > 0:
-            label_to_remove = label_dict[pr_object.previous_label]
-            logging.info("Removing label '%s' from PR: '%s' %s", label_to_remove, p_r_num, p_r_url)
-            if not dry_run:
-                pr_object.p_r.remove_from_labels(label_to_remove)
-
         label_to_add = ""
         if approval_count >= 3:
             label_to_add = label_dict[3]
         else:
             label_to_add = label_dict[pr_object.new_label]
+
+        if pr_object.previous_label > 0:
+            if pr_object.previous_label == 3 and approval_count == 3:
+                continue
+            label_to_remove = label_dict[pr_object.previous_label]
+            logging.info("Removing label '%s' from PR: '%s' %s", label_to_remove, p_r_num, p_r_url)
+            if not dry_run:
+                pr_object.p_r.remove_from_labels(label_to_remove)
 
         logging.info("Adding label '%s' to PR: '%s' %s", label_to_add, p_r_num, p_r_url)
         if not dry_run:
