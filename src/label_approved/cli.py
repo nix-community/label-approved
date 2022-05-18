@@ -142,7 +142,7 @@ def main() -> None:
             label_to_add = label_dict[pr_object.new_label]
 
         if pr_object.previous_label > 0:
-            if pr_object.previous_label == 3 and approval_count == 3:
+            if pr_object.previous_label == 3 and approval_count >= 3:
                 continue
             label_to_remove = label_dict[pr_object.previous_label]
             logging.info("Removing label '%s' from PR: '%s' %s", label_to_remove, p_r_num, p_r_url)
