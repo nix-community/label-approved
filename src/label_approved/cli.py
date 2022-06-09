@@ -99,9 +99,19 @@ def main() -> None:
 
         p_r_reviews = list(p_r.get_reviews())
 
-        approved_reviews = [review for review in p_r_reviews if review.state == "APPROVED"]
+        approvals = dict()
+        last_approved_review_date = datetime.min.date()
+        for review in p_r_reviews:
+            if review.state == "APPROVED":
+                approvals[review.user] = review
+                last_approved_review_date = review.submitted_at
+            else:
+                try:
+                    del approvals[review.user]
+                except KeyError:
+                    pass
 
-        approval_count = len(approved_reviews)
+        approval_count = len(approvals)
 
         pr_labels = list(p_r.get_labels())
         pr_label_by_name = {label.name: label for label in pr_labels}
@@ -111,11 +121,6 @@ def main() -> None:
 
         pr_object = PrWithApprovals(p_r, approval_count, old_approval_count)
         logging.debug(pr_object)
-
-        last_approved_review_date = datetime.min.date()
-        if approved_reviews:
-            last_approved_review_date = approved_reviews[-1].submitted_at
-
 
         p_r_url = pr_object.p_r.html_url
         p_r_num = pr_object.p_r.number
@@ -155,8 +160,7 @@ def main() -> None:
 
         maintainers: list[str] = get_maintainers(g_h, last_commit)
 
-        approved_users = [review.user for review in approved_reviews]
-        for a_u in approved_users:
+        for a_u in approvals.keys():
             if a_u.login in maintainers:
                 logging.info("Adding label '12.approved-by: package-maintainer' to PR: '%s' %s", p_r_num, p_r_url)
                 if not dry_run:
