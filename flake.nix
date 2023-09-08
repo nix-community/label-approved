@@ -37,7 +37,7 @@
             nativeBuildInputs = with python.pkgs; [ poetry-core ];
             propagatedBuildInputs = with python.pkgs; [ PyGithub dateutil ];
             src = ./.;
-            checkInputs = with pkgs; [ python.pkgs.mypy python.pkgs.types-dateutil ];
+            nativeCheckInputs = with pkgs; [ python.pkgs.mypy python.pkgs.types-dateutil ];
             checkPhase = ''
               export MYPYPATH=$PWD/src
               mypy --strict .
