@@ -11,6 +11,9 @@ from github.Commit import Commit
 from github.PullRequest import PullRequest
 
 
+DEFAULT_REPO = "NixOS/nixpkgs"
+
+
 def ghtoken() -> Optional[str]:
     token = os.getenv("GITHUB_BOT_TOKEN")
     if not token:
@@ -147,6 +150,7 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="nixpkgs PR approvals labeler")
     parser.add_argument("--dry_run", action="store_true")
+    parser.add_argument("--repo", default=DEFAULT_REPO)
     args = parser.parse_args()
 
     g_h = Github(ghtoken())
@@ -163,7 +167,7 @@ def main() -> None:
         "draft:false",
         "is:pr",
         "is:open",
-        "repo:NixOS/nixpkgs",
+        f"repo:{args.repo}",
     ]
     pulls = g_h.search_issues(query=" ".join(query))
 
