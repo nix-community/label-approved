@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 import sys
@@ -144,6 +145,9 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="nixpkgs PR approvals labeler")
+    parser.add_argument("--dry_run", action="store_true")
+    args = parser.parse_args()
 
     g_h = Github(ghtoken())
     query: list[str] = [
@@ -163,11 +167,12 @@ def main() -> None:
     ]
     pulls = g_h.search_issues(query=" ".join(query))
 
-    dry_run = False
+    if args.dry_run:
+        logging.warning("Running in dry run mode, no changes will be applied")
 
     logging.info("Pulls total: %s", pulls.totalCount)
     for p_r_as_issue in pulls:
-        process_pr(g_h, p_r_as_issue.as_pull_request(), dry_run=dry_run)
+        process_pr(g_h, p_r_as_issue.as_pull_request(), dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
