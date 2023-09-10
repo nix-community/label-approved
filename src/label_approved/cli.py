@@ -151,32 +151,39 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="nixpkgs PR approvals labeler")
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--repo", default=DEFAULT_REPO)
+    parser.add_argument("--single_pr", type=int, help="Run on a single PR instead of crawling the repository")
     args = parser.parse_args()
 
     g_h = Github(ghtoken())
-    query: list[str] = [
-        # "author:r-ryantm",
-        #'label:"10.rebuild-linux: 1-10"',
-        #'-label:"10.rebuild-linux: 1-10"'
-        #'label:"12.approvals: 1"',
-        #'-label:"12.approvals: 2"',
-        #'-label:"12.approvals: 3+',
-        # "base:staging",
-        # "sort:updated-desc",
-        # "sort:created-desc",
-        "draft:false",
-        "is:pr",
-        "is:open",
-        f"repo:{args.repo}",
-    ]
-    pulls = g_h.search_issues(query=" ".join(query))
 
     if args.dry_run:
         logging.warning("Running in dry run mode, no changes will be applied")
 
-    logging.info("Pulls total: %s", pulls.totalCount)
-    for p_r_as_issue in pulls:
-        process_pr(g_h, p_r_as_issue.as_pull_request(), dry_run=args.dry_run)
+    if args.single_pr is not None:
+        repo = g_h.get_repo(args.repo)
+        p_r = repo.get_pull(args.single_pr)
+        process_pr(g_h, p_r, dry_run=args.dry_run)
+    else:
+        query: list[str] = [
+            # "author:r-ryantm",
+            #'label:"10.rebuild-linux: 1-10"',
+            #'-label:"10.rebuild-linux: 1-10"'
+            #'label:"12.approvals: 1"',
+            #'-label:"12.approvals: 2"',
+            #'-label:"12.approvals: 3+',
+            # "base:staging",
+            # "sort:updated-desc",
+            # "sort:created-desc",
+            "draft:false",
+            "is:pr",
+            "is:open",
+            f"repo:{args.repo}",
+        ]
+        pulls = g_h.search_issues(query=" ".join(query))
+
+        logging.info("Pulls total: %s", pulls.totalCount)
+        for p_r_as_issue in pulls:
+            process_pr(g_h, p_r_as_issue.as_pull_request(), dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
