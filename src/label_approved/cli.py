@@ -67,6 +67,82 @@ def get_maintainers(g_h: Github, commit: Commit) -> list[str]:
     return maintainers
 
 
+def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
+    logging.info("Processing %s", p_r.number)
+    last_commit = list(p_r.get_commits())[-1]
+    last_commit_date = datetime.min.date()
+    last_commit_date = last_commit.commit.committer.date
+
+    p_r_reviews = list(p_r.get_reviews())
+
+    approvals = dict()
+    last_approved_review_date = datetime.min.date()
+    for review in p_r_reviews:
+        if review.state == "APPROVED":
+            approvals[review.user] = review
+            last_approved_review_date = review.submitted_at
+        else:
+            try:
+                del approvals[review.user]
+            except KeyError:
+                pass
+
+    approval_count = len(approvals)
+
+    pr_labels = list(p_r.get_labels())
+    pr_label_by_name = {label.name: label for label in pr_labels}
+    old_approval_count = 0
+    if o_a_c := [k for k, v in label_dict.items() if v in pr_label_by_name]:
+        old_approval_count = o_a_c[0]
+
+    pr_object = PrWithApprovals(p_r, approval_count, old_approval_count)
+    logging.debug(pr_object)
+
+    p_r_url = pr_object.p_r.html_url
+    p_r_num = pr_object.p_r.number
+
+    if last_approved_review_date != datetime.min.date():
+        logging.info("lastappdate: %s", last_approved_review_date)
+        logging.info("lastcommitdate: %s", last_commit_date)
+        if last_commit_date > last_approved_review_date:
+            if pr_object.previous_label != 0:
+                label_to_remove = label_dict[pr_object.previous_label]
+                logging.info("Removing label '%s' from PR: '%s' %s", label_to_remove, p_r_num, p_r_url)
+                if not dry_run:
+                    pr_object.p_r.remove_from_labels(label_to_remove)
+            return
+
+
+    if pr_object.same_as_before():
+        return
+
+    label_to_add = ""
+    if approval_count >= 3:
+        label_to_add = label_dict[3]
+    else:
+        label_to_add = label_dict[pr_object.new_label]
+
+    if pr_object.previous_label > 0:
+        if pr_object.previous_label == 3 and approval_count >= 3:
+            return
+        label_to_remove = label_dict[pr_object.previous_label]
+        logging.info("Removing label '%s' from PR: '%s' %s", label_to_remove, p_r_num, p_r_url)
+        if not dry_run:
+            pr_object.p_r.remove_from_labels(label_to_remove)
+
+    logging.info("Adding label '%s' to PR: '%s' %s", label_to_add, p_r_num, p_r_url)
+    if not dry_run:
+        pr_object.p_r.add_to_labels(label_to_add)
+
+    maintainers: list[str] = get_maintainers(g_h, last_commit)
+
+    for a_u in approvals.keys():
+        if a_u.login in maintainers:
+            logging.info("Adding label '12.approved-by: package-maintainer' to PR: '%s' %s", p_r_num, p_r_url)
+            if not dry_run:
+                pr_object.p_r.add_to_labels("12.approved-by: package-maintainer")
+
+
 def main() -> None:
 
     g_h = Github(ghtoken())
@@ -87,84 +163,11 @@ def main() -> None:
     ]
     pulls = g_h.search_issues(query=" ".join(query))
 
-    dry_run = 0
+    dry_run = False
 
     logging.info("Pulls total: %s", pulls.totalCount)
     for p_r_as_issue in pulls:
-        p_r = p_r_as_issue.as_pull_request()
-        logging.info("Processing %s", p_r.number)
-        last_commit = list(p_r.get_commits())[-1]
-        last_commit_date = datetime.min.date()
-        last_commit_date = last_commit.commit.committer.date
-
-        p_r_reviews = list(p_r.get_reviews())
-
-        approvals = dict()
-        last_approved_review_date = datetime.min.date()
-        for review in p_r_reviews:
-            if review.state == "APPROVED":
-                approvals[review.user] = review
-                last_approved_review_date = review.submitted_at
-            else:
-                try:
-                    del approvals[review.user]
-                except KeyError:
-                    pass
-
-        approval_count = len(approvals)
-
-        pr_labels = list(p_r.get_labels())
-        pr_label_by_name = {label.name: label for label in pr_labels}
-        old_approval_count = 0
-        if o_a_c := [k for k, v in label_dict.items() if v in pr_label_by_name]:
-            old_approval_count = o_a_c[0]
-
-        pr_object = PrWithApprovals(p_r, approval_count, old_approval_count)
-        logging.debug(pr_object)
-
-        p_r_url = pr_object.p_r.html_url
-        p_r_num = pr_object.p_r.number
-
-        if last_approved_review_date != datetime.min.date():
-            logging.info("lastappdate: %s", last_approved_review_date)
-            logging.info("lastcommitdate: %s", last_commit_date)
-            if last_commit_date > last_approved_review_date:
-                if pr_object.previous_label != 0:
-                    label_to_remove = label_dict[pr_object.previous_label]
-                    logging.info("Removing label '%s' from PR: '%s' %s", label_to_remove, p_r_num, p_r_url)
-                    if not dry_run:
-                        pr_object.p_r.remove_from_labels(label_to_remove)
-                continue
-
-
-        if pr_object.same_as_before():
-            continue
-
-        label_to_add = ""
-        if approval_count >= 3:
-            label_to_add = label_dict[3]
-        else:
-            label_to_add = label_dict[pr_object.new_label]
-
-        if pr_object.previous_label > 0:
-            if pr_object.previous_label == 3 and approval_count >= 3:
-                continue
-            label_to_remove = label_dict[pr_object.previous_label]
-            logging.info("Removing label '%s' from PR: '%s' %s", label_to_remove, p_r_num, p_r_url)
-            if not dry_run:
-                pr_object.p_r.remove_from_labels(label_to_remove)
-
-        logging.info("Adding label '%s' to PR: '%s' %s", label_to_add, p_r_num, p_r_url)
-        if not dry_run:
-            pr_object.p_r.add_to_labels(label_to_add)
-
-        maintainers: list[str] = get_maintainers(g_h, last_commit)
-
-        for a_u in approvals.keys():
-            if a_u.login in maintainers:
-                logging.info("Adding label '12.approved-by: package-maintainer' to PR: '%s' %s", p_r_num, p_r_url)
-                if not dry_run:
-                    pr_object.p_r.add_to_labels("12.approved-by: package-maintainer")
+        process_pr(g_h, p_r_as_issue.as_pull_request(), dry_run=dry_run)
 
 
 if __name__ == "__main__":
