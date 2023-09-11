@@ -73,7 +73,7 @@
         };
 
       }) // {
-        nixosModule = { config, lib, pkgs, ... }: let
+        nixosModules.default = { config, lib, pkgs, ... }: let
           cfg = config.services.label-approved;
         in {
           options.services.label-approved = with lib; {
