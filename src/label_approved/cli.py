@@ -15,10 +15,11 @@ DEFAULT_REPO = "NixOS/nixpkgs"
 
 
 def ghtoken() -> Optional[str]:
-    token = os.getenv("GITHUB_BOT_TOKEN")
-    if not token:
-        token = os.getenv("GITHUB_TOKEN")
-    if not token:
+    for env_key in ("INPUT_GITHUB_TOKEN", "GITHUB_BOT_TOKEN", "GITHUB_TOKEN"):
+        token = os.getenv(env_key)
+        if token:
+            break
+    else:
         print("need a github token")
         sys.exit(1)
     return token
