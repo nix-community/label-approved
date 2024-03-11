@@ -142,7 +142,7 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
     maintainers: list[str] = get_maintainers(g_h, last_commit)
 
     for a_u in approvals.keys():
-        if a_u.login in maintainers:
+        if a_u.login.lower() in maintainers:
             logging.info("Adding label '12.approved-by: package-maintainer' to PR: '%s' %s", p_r_num, p_r_url)
             if not dry_run:
                 pr_object.p_r.add_to_labels("12.approved-by: package-maintainer")
