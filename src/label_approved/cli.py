@@ -10,7 +10,6 @@ from github import Github
 from github.Commit import Commit
 from github.PullRequest import PullRequest
 
-
 DEFAULT_REPO = "NixOS/nixpkgs"
 
 
@@ -117,7 +116,6 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
                     pr_object.p_r.remove_from_labels(label_to_remove)
             return
 
-
     if pr_object.same_as_before():
         return
 
@@ -142,10 +140,12 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
     maintainers: list[str] = get_maintainers(g_h, last_commit)
 
     for a_u in approvals.keys():
-        if a_u.login.lower() in maintainers:
-            logging.info("Adding label '12.approved-by: package-maintainer' to PR: '%s' %s", p_r_num, p_r_url)
-            if not dry_run:
-                pr_object.p_r.add_to_labels("12.approved-by: package-maintainer")
+        # can be None if the account has been removed
+        if a_u is not None:
+            if a_u.login.lower() in maintainers:
+                logging.info("Adding label '12.approved-by: package-maintainer' to PR: '%s' %s", p_r_num, p_r_url)
+                if not dry_run:
+                    pr_object.p_r.add_to_labels("12.approved-by: package-maintainer")
 
 
 def main() -> None:
