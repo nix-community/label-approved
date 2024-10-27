@@ -119,12 +119,6 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
     if pr_object.same_as_before():
         return
 
-    label_to_add = ""
-    if approval_count >= 3:
-        label_to_add = label_dict[3]
-    else:
-        label_to_add = label_dict[pr_object.new_label]
-
     if pr_object.previous_label > 0:
         if pr_object.previous_label == 3 and approval_count >= 3:
             return
@@ -133,6 +127,13 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
         if not dry_run:
             pr_object.p_r.remove_from_labels(label_to_remove)
 
+    if approval_count == 0:
+        return
+
+    if approval_count >= 3:
+        label_to_add = label_dict[3]
+    else:
+        label_to_add = label_dict[pr_object.new_label]
     logging.info("Adding label '%s' to PR: '%s' %s", label_to_add, p_r_num, p_r_url)
     if not dry_run:
         pr_object.p_r.add_to_labels(label_to_add)
