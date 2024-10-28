@@ -53,8 +53,8 @@ else:
     logging.basicConfig(level=logging.INFO)
 
 
-def get_maintainers(g_h: Github, commit: Commit) -> list[str]:
-    maintainers: list[str] = []
+def get_maintainers(g_h: Github, commit: Commit) -> set[str]:
+    maintainers: set[str] = set()
     for status in commit.get_statuses():
         if status.context == "ofborg-eval-check-maintainers":
             gist_url = status.target_url
@@ -67,7 +67,7 @@ def get_maintainers(g_h: Github, commit: Commit) -> list[str]:
                     if line == "Maintainers:":
                         continue
                     maintainer = line.split(":")[0].strip()
-                    maintainers.append(maintainer)
+                    maintainers.add(maintainer)
     return maintainers
 
 
@@ -79,19 +79,18 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
 
     p_r_reviews = list(p_r.get_reviews())
 
-    approvals = dict()
+    approved_users: set[str] = set()
     last_approved_review_date = datetime.min.date()
     for review in p_r_reviews:
+        # can be None if the account has been removed
+        reviewed_user = review.user.login.lower() if review.user is not None else "ghost"
         if review.state == "APPROVED":
-            approvals[review.user] = review
+            approved_users.add(reviewed_user)
             last_approved_review_date = review.submitted_at
         else:
-            try:
-                del approvals[review.user]
-            except KeyError:
-                pass
+            approved_users.discard(reviewed_user)
 
-    approval_count = len(approvals)
+    approval_count = len(approved_users)
 
     pr_labels = list(p_r.get_labels())
     pr_label_by_name = {label.name: label for label in pr_labels}
@@ -138,15 +137,12 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
     if not dry_run:
         pr_object.p_r.add_to_labels(label_to_add)
 
-    maintainers: list[str] = get_maintainers(g_h, last_commit)
+    maintainers: set[str] = get_maintainers(g_h, last_commit)
 
-    for a_u in approvals.keys():
-        # can be None if the account has been removed
-        if a_u is not None:
-            if a_u.login.lower() in maintainers:
-                logging.info("Adding label '12.approved-by: package-maintainer' to PR: '%s' %s", p_r_num, p_r_url)
-                if not dry_run:
-                    pr_object.p_r.add_to_labels("12.approved-by: package-maintainer")
+    if approved_users & maintainers:
+        logging.info("Adding label '12.approved-by: package-maintainer' to PR: '%s' %s", p_r_num, p_r_url)
+        if not dry_run:
+            pr_object.p_r.add_to_labels("12.approved-by: package-maintainer")
 
 
 def main() -> None:
