@@ -30,6 +30,7 @@ def ghtoken() -> Optional[str]:
 
 
 label_dict: dict[int, str] = {
+    -1: "12.approved-by: package-maintainer",
     1: "12.approvals: 1",
     2: "12.approvals: 2",
     3: "12.approvals: 3+",
@@ -44,11 +45,19 @@ class Settings:
 @dataclass
 class PrWithApprovals:
     p_r: PullRequest
-    approval_count: int
-    old_approval_count: int = 0
+    dry_run: bool
 
-    def same_as_before(self) -> bool:
-        return self.approval_count == self.old_approval_count
+    def add_labels(self, labels: set[str]) -> None:
+        for label in labels:
+            logging.info("Adding label '%s' to PR: '%s' %s", label, self.p_r.number, self.p_r.html_url)
+            if not self.dry_run:
+                self.p_r.add_to_labels(label)
+
+    def remove_labels(self, labels: set[str]) -> None:
+        for label in labels:
+            logging.info("Removing label '%s' from PR: '%s' %s", label, self.p_r.number, self.p_r.html_url)
+            if not self.dry_run:
+                self.p_r.remove_from_labels(label)
 
 
 settings = Settings()
@@ -79,13 +88,8 @@ def get_maintainers(g_h: Github, commit: Commit) -> set[str]:
 def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
     logging.info("Processing %s", p_r.number)
 
-    p_r_commits = list(p_r.get_commits())
-    # if there are no commits, the PR is closed; no need to update labels
-    if not p_r_commits:
-        return
-
-    last_commit = p_r_commits[-1]
-    last_commit_date = last_commit.commit.committer.date
+    p_r_object = PrWithApprovals(p_r, dry_run)
+    logging.debug(p_r_object)
 
     p_r_reviews = list(p_r.get_reviews())
 
@@ -100,59 +104,32 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
         else:
             approved_users.discard(reviewed_user)
 
-    approval_count = len(approved_users)
+    p_r_labels = list(p_r.get_labels())
+    old_labels: set[str] = {label.name for label in p_r_labels} & set(label_dict.values())
 
-    pr_labels = list(p_r.get_labels())
-    pr_label_by_name = {label.name: label for label in pr_labels}
-    old_approval_count = 0
-    if o_a_c := [k for k, v in label_dict.items() if v in pr_label_by_name]:
-        old_approval_count = o_a_c[0]
-
-    pr_object = PrWithApprovals(p_r, approval_count, old_approval_count)
-    logging.debug(pr_object)
-
-    p_r_url = pr_object.p_r.html_url
-    p_r_num = pr_object.p_r.number
-
+    labels: set[str] = set()
     if last_approved_review_date is not None:
+        p_r_commits = list(p_r.get_commits())
+        # if there are no commits, the PR is closed; no need to update labels
+        if not p_r_commits:
+            return
+
+        last_commit = p_r_commits[-1]
+        last_commit_date = last_commit.commit.committer.date
         logging.info("lastappdate: %s", last_approved_review_date)
         logging.info("lastcommitdate: %s", last_commit_date)
-        if last_commit_date > last_approved_review_date:
-            if pr_object.old_approval_count != 0:
-                label_to_remove = label_dict[pr_object.old_approval_count]
-                logging.info("Removing label '%s' from PR: '%s' %s", label_to_remove, p_r_num, p_r_url)
-                if not dry_run:
-                    pr_object.p_r.remove_from_labels(label_to_remove)
-            return
 
-    if pr_object.same_as_before():
-        return
+        if last_commit_date <= last_approved_review_date:
+            approval_count = min(len(approved_users), max(label_dict.keys()))
+            if approval_count:
+                labels.add(label_dict[approval_count])
 
-    if pr_object.old_approval_count > 0:
-        if pr_object.old_approval_count == 3 and approval_count >= 3:
-            return
-        label_to_remove = label_dict[pr_object.old_approval_count]
-        logging.info("Removing label '%s' from PR: '%s' %s", label_to_remove, p_r_num, p_r_url)
-        if not dry_run:
-            pr_object.p_r.remove_from_labels(label_to_remove)
+                maintainers: set[str] = get_maintainers(g_h, last_commit)
+                if approved_users & maintainers:
+                    labels.add(label_dict[-1])
 
-    if approval_count == 0:
-        return
-
-    if approval_count >= 3:
-        label_to_add = label_dict[3]
-    else:
-        label_to_add = label_dict[pr_object.approval_count]
-    logging.info("Adding label '%s' to PR: '%s' %s", label_to_add, p_r_num, p_r_url)
-    if not dry_run:
-        pr_object.p_r.add_to_labels(label_to_add)
-
-    maintainers: set[str] = get_maintainers(g_h, last_commit)
-
-    if approved_users & maintainers:
-        logging.info("Adding label '12.approved-by: package-maintainer' to PR: '%s' %s", p_r_num, p_r_url)
-        if not dry_run:
-            pr_object.p_r.add_to_labels("12.approved-by: package-maintainer")
+    p_r_object.remove_labels(old_labels - labels)
+    p_r_object.add_labels(labels - old_labels)
 
 
 def main() -> None:
