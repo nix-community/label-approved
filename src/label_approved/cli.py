@@ -39,11 +39,11 @@ class Settings:
 @dataclass
 class PrWithApprovals:
     p_r: PullRequest
-    new_label: int
-    previous_label: int = 0
+    approval_count: int
+    old_approval_count: int = 0
 
     def same_as_before(self) -> bool:
-        return self.new_label == self.previous_label
+        return self.approval_count == self.old_approval_count
 
 
 settings = Settings()
@@ -109,8 +109,8 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
         logging.info("lastappdate: %s", last_approved_review_date)
         logging.info("lastcommitdate: %s", last_commit_date)
         if last_commit_date > last_approved_review_date:
-            if pr_object.previous_label != 0:
-                label_to_remove = label_dict[pr_object.previous_label]
+            if pr_object.old_approval_count != 0:
+                label_to_remove = label_dict[pr_object.old_approval_count]
                 logging.info("Removing label '%s' from PR: '%s' %s", label_to_remove, p_r_num, p_r_url)
                 if not dry_run:
                     pr_object.p_r.remove_from_labels(label_to_remove)
@@ -119,10 +119,10 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
     if pr_object.same_as_before():
         return
 
-    if pr_object.previous_label > 0:
-        if pr_object.previous_label == 3 and approval_count >= 3:
+    if pr_object.old_approval_count > 0:
+        if pr_object.old_approval_count == 3 and approval_count >= 3:
             return
-        label_to_remove = label_dict[pr_object.previous_label]
+        label_to_remove = label_dict[pr_object.old_approval_count]
         logging.info("Removing label '%s' from PR: '%s' %s", label_to_remove, p_r_num, p_r_url)
         if not dry_run:
             pr_object.p_r.remove_from_labels(label_to_remove)
@@ -133,7 +133,7 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
     if approval_count >= 3:
         label_to_add = label_dict[3]
     else:
-        label_to_add = label_dict[pr_object.new_label]
+        label_to_add = label_dict[pr_object.approval_count]
     logging.info("Adding label '%s' to PR: '%s' %s", label_to_add, p_r_num, p_r_url)
     if not dry_run:
         pr_object.p_r.add_to_labels(label_to_add)
