@@ -1,6 +1,8 @@
 import argparse
 import logging
 import os
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,11 +19,15 @@ def ghtoken() -> Optional[str]:
     for env_key in ("INPUT_GITHUB_TOKEN", "GITHUB_BOT_TOKEN", "GITHUB_TOKEN"):
         token = os.getenv(env_key)
         if token:
-            break
-    else:
-        print("need a github token")
-        sys.exit(1)
-    return token
+            return token
+
+    if shutil.which("gh"):
+        r = subprocess.run(["gh", "auth", "token"], stdout=subprocess.PIPE, text=True)
+        if r.returncode == 0:
+            return r.stdout.strip()
+
+    print("need a github token")
+    sys.exit(1)
 
 
 label_dict: dict[int, str] = {
