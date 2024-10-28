@@ -2,7 +2,7 @@
   description = "Python application managed with poetry2nix";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
     poetry2nix = {
       url = "github:nix-community/poetry2nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -21,23 +21,23 @@
         pkgs = import nixpkgs {
           inherit system;
           overlays = [
-            poetry2nix.overlay
+            poetry2nix.overlays.default
           ];
         };
-        python = pkgs.python310;
+        python = pkgs.python311;
         packageName = "label-approved";
         packageVersion = "0.1.0";
       in
       {
         packages = rec {
-          label-approved = python.pkgs.buildPythonApplication rec {
+          label-approved = python.pkgs.buildPythonApplication {
             pname = packageName;
             version = packageVersion;
             format = "pyproject";
             nativeBuildInputs = with python.pkgs; [ poetry-core ];
-            propagatedBuildInputs = with python.pkgs; [ PyGithub dateutil ];
+            propagatedBuildInputs = with python.pkgs; [ pygithub python-dateutil ];
             src = ./.;
-            nativeCheckInputs = with pkgs; [ python.pkgs.mypy python.pkgs.types-dateutil ];
+            nativeCheckInputs = with python.pkgs; [ mypy types-dateutil ];
             checkPhase = ''
               export MYPYPATH=$PWD/src
               mypy --strict .
@@ -50,7 +50,7 @@
           default = pkgs.mkShell {
             buildInputs = with pkgs; [
               pyright
-              (pkgs.poetry.override { python = python; })
+              (pkgs.poetry.override { python3 = python; })
               (pkgs.poetry2nix.mkPoetryEnv {
                 inherit python;
                 projectDir = ./.;
@@ -81,12 +81,12 @@
             interval = mkOption {
               default = "*:0/30";
               type = types.str;
-              description = lib.mdDoc "systemd-timer OnCalendar config";
+              description = "systemd-timer OnCalendar config";
             };
             environmentFile = mkOption {
               type = types.path;
               example = "/run/secrets/label-approved.env";
-              description = lib.mdDoc ''
+              description = ''
                 Environment file to source before running the service. This
                 should contain a GITHUB_TOKEN or GITHUB_BOT_TOKEN variable.
               '';

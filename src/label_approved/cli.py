@@ -154,9 +154,13 @@ def main() -> None:
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--single_pr", type=int, help="Run on a single PR instead of crawling the repository")
+    parser.add_argument("--enable_throttling", action="store_true", help="Enable default throttling mechanism to mitigate secondary rate limit errors")
     args = parser.parse_args()
 
-    g_h = Github(ghtoken())
+    if args.enable_throttling:
+        g_h = Github(ghtoken())
+    else:
+        g_h = Github(ghtoken(), seconds_between_requests=0, seconds_between_writes=0)
 
     if args.dry_run:
         logging.warning("Running in dry run mode, no changes will be applied")
