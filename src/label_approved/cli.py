@@ -10,6 +10,7 @@ from typing import Optional
 
 from github import Github
 from github.Commit import Commit
+from github.Consts import DEFAULT_PER_PAGE
 from github.PullRequest import PullRequest
 
 DEFAULT_REPO = "NixOS/nixpkgs"
@@ -174,6 +175,7 @@ def main() -> None:
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--single_pr", type=int, help="Run on a single PR instead of crawling the repository")
     parser.add_argument("--enable_throttling", action="store_true", help="Enable default throttling mechanism to mitigate secondary rate limit errors")
+    parser.add_argument("--paginate", action="store_true", help="Make additional requests to run on all PRs")
     args = parser.parse_args()
 
     if args.enable_throttling:
@@ -204,12 +206,24 @@ def main() -> None:
             "is:open",
             f"repo:{args.repo}",
         ]
-        pulls = g_h.search_issues(query=" ".join(query))
 
-        logging.info("Pulls total: %s", pulls.totalCount)
-        for p_r_as_issue in pulls:
-            p_r = p_r_as_issue.as_pull_request()
-            process_pr(g_h, PrWithApprovals(p_r, args.dry_run))
+        paginated_pulls = [g_h.search_issues(query=" ".join(query))]
+        last_pulls = paginated_pulls[-1]
+        total_count = last_pulls.totalCount
+
+        while args.paginate and last_pulls.totalCount:
+            last_pull = last_pulls.get_page((last_pulls.totalCount - 1) // DEFAULT_PER_PAGE)[-1]
+            last_created_at = last_pull.created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            paginated_pulls.append(g_h.search_issues(query=" ".join(query) + f" created:<{last_created_at}"))
+            last_pulls = paginated_pulls[-1]
+            total_count += last_pulls.totalCount
+
+        logging.info("Pulls total: %s", total_count)
+        for pulls in paginated_pulls:
+            for p_r_as_issue in pulls:
+                p_r = p_r_as_issue.as_pull_request()
+                process_pr(g_h, PrWithApprovals(p_r, args.dry_run))
 
 
 if __name__ == "__main__":
