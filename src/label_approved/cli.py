@@ -5,7 +5,6 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Optional
 
 from github import Github
@@ -79,14 +78,19 @@ def get_maintainers(g_h: Github, commit: Commit) -> set[str]:
 
 def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
     logging.info("Processing %s", p_r.number)
-    last_commit = list(p_r.get_commits())[-1]
-    last_commit_date = datetime.min.date()
+
+    p_r_commits = list(p_r.get_commits())
+    # if there are no commits, the PR is closed; no need to update labels
+    if not p_r_commits:
+        return
+
+    last_commit = p_r_commits[-1]
     last_commit_date = last_commit.commit.committer.date
 
     p_r_reviews = list(p_r.get_reviews())
 
     approved_users: set[str] = set()
-    last_approved_review_date = datetime.min.date()
+    last_approved_review_date = None
     for review in p_r_reviews:
         # can be None if the account has been removed
         reviewed_user = review.user.login.lower() if review.user is not None else "ghost"
@@ -110,7 +114,7 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
     p_r_url = pr_object.p_r.html_url
     p_r_num = pr_object.p_r.number
 
-    if last_approved_review_date != datetime.min.date():
+    if last_approved_review_date is not None:
         logging.info("lastappdate: %s", last_approved_review_date)
         logging.info("lastcommitdate: %s", last_commit_date)
         if last_commit_date > last_approved_review_date:
