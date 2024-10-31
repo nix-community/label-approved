@@ -35,9 +35,9 @@
             version = packageVersion;
             format = "pyproject";
             nativeBuildInputs = with python.pkgs; [ poetry-core ];
-            propagatedBuildInputs = with python.pkgs; [ pygithub python-dateutil ];
+            propagatedBuildInputs = with python.pkgs; [ pygithub python-dateutil requests ];
             src = ./.;
-            nativeCheckInputs = with python.pkgs; [ mypy types-dateutil ];
+            nativeCheckInputs = with python.pkgs; [ mypy types-dateutil types-requests ];
             checkPhase = ''
               export MYPYPATH=$PWD/src
               mypy --strict .
