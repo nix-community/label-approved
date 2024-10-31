@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
 from github import Github
@@ -43,9 +44,49 @@ class Settings:
 
 
 @dataclass
+class Review:
+    author: str
+    state: str
+    submitted_at: datetime
+
+
+@dataclass
+class Status:
+    context: str
+    target_url: str
+
+
+@dataclass
 class PrWithApprovals:
     p_r: PullRequest
     dry_run: bool
+    last_commit: Optional[Commit] = None
+
+    def get_number(self) -> int:
+        return self.p_r.number
+
+    def get_reviews(self) -> list[Review]:
+        reviews: list[Review] = []
+        for review in self.p_r.get_reviews():
+            # can be None if the account has been removed
+            author = review.user.login if review.user is not None else "ghost"
+            reviews.append(Review(author, review.state, review.submitted_at))
+        return reviews
+
+    def get_last_commit_date(self) -> Optional[datetime]:
+        commits = list(self.p_r.get_commits())
+        if not commits:
+            return None
+        self.last_commit = commits[-1]
+        return self.last_commit.commit.committer.date
+
+    def get_last_commit_statuses(self) -> list[Status]:
+        if self.last_commit is None:
+            return []
+        return [Status(status.context, status.target_url) for status in self.last_commit.get_statuses()]
+
+    def get_labels(self) -> set[str]:
+        return {label.name for label in self.p_r.get_labels()}
 
     def add_labels(self, labels: set[str]) -> None:
         for label in labels:
@@ -67,9 +108,9 @@ else:
     logging.basicConfig(level=logging.INFO)
 
 
-def get_maintainers(g_h: Github, commit: Commit) -> set[str]:
+def get_maintainers(g_h: Github, p_r_object: PrWithApprovals) -> set[str]:
     maintainers: set[str] = set()
-    for status in commit.get_statuses():
+    for status in p_r_object.get_last_commit_statuses():
         if status.context == "ofborg-eval-check-maintainers":
             gist_url = status.target_url
             if gist_url:
@@ -85,37 +126,32 @@ def get_maintainers(g_h: Github, commit: Commit) -> set[str]:
     return maintainers
 
 
-def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
-    logging.info("Processing %s", p_r.number)
+def process_pr(g_h: Github, p_r_object: PrWithApprovals) -> None:
+    logging.info("Processing %s", p_r_object.get_number())
 
-    p_r_object = PrWithApprovals(p_r, dry_run)
     logging.debug(p_r_object)
 
-    p_r_reviews = list(p_r.get_reviews())
+    p_r_reviews = p_r_object.get_reviews()
 
     approved_users: set[str] = set()
     last_approved_review_date = None
     for review in p_r_reviews:
-        # can be None if the account has been removed
-        reviewed_user = review.user.login.lower() if review.user is not None else "ghost"
+        reviewed_user = review.author.lower()
         if review.state == "APPROVED":
             approved_users.add(reviewed_user)
             last_approved_review_date = review.submitted_at
         else:
             approved_users.discard(reviewed_user)
 
-    p_r_labels = list(p_r.get_labels())
-    old_labels: set[str] = {label.name for label in p_r_labels} & set(label_dict.values())
+    old_labels: set[str] = p_r_object.get_labels() & set(label_dict.values())
 
     labels: set[str] = set()
     if last_approved_review_date is not None:
-        p_r_commits = list(p_r.get_commits())
+        last_commit_date = p_r_object.get_last_commit_date()
         # if there are no commits, the PR is closed; no need to update labels
-        if not p_r_commits:
+        if last_commit_date is None:
             return
 
-        last_commit = p_r_commits[-1]
-        last_commit_date = last_commit.commit.committer.date
         logging.info("lastappdate: %s", last_approved_review_date)
         logging.info("lastcommitdate: %s", last_commit_date)
 
@@ -124,7 +160,7 @@ def process_pr(g_h: Github, p_r: PullRequest, *, dry_run: bool = False) -> None:
             if approval_count:
                 labels.add(label_dict[approval_count])
 
-                maintainers: set[str] = get_maintainers(g_h, last_commit)
+                maintainers: set[str] = get_maintainers(g_h, p_r_object)
                 if approved_users & maintainers:
                     labels.add(label_dict[-1])
 
@@ -151,7 +187,7 @@ def main() -> None:
     if args.single_pr is not None:
         repo = g_h.get_repo(args.repo)
         p_r = repo.get_pull(args.single_pr)
-        process_pr(g_h, p_r, dry_run=args.dry_run)
+        process_pr(g_h, PrWithApprovals(p_r, args.dry_run))
     else:
         query: list[str] = [
             # "author:r-ryantm",
@@ -172,7 +208,8 @@ def main() -> None:
 
         logging.info("Pulls total: %s", pulls.totalCount)
         for p_r_as_issue in pulls:
-            process_pr(g_h, p_r_as_issue.as_pull_request(), dry_run=args.dry_run)
+            p_r = p_r_as_issue.as_pull_request()
+            process_pr(g_h, PrWithApprovals(p_r, args.dry_run))
 
 
 if __name__ == "__main__":
