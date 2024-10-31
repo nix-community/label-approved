@@ -4,18 +4,20 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from string import Template
+from typing import Any, Optional
 
+import requests
 from github import Github
-from github.Commit import Commit
-from github.PullRequest import PullRequest
+from github.Consts import DEFAULT_SECONDS_BETWEEN_REQUESTS, DEFAULT_SECONDS_BETWEEN_WRITES
 
 DEFAULT_REPO = "NixOS/nixpkgs"
 
 
-def ghtoken() -> Optional[str]:
+def ghtoken() -> str:
     for env_key in ("INPUT_GITHUB_TOKEN", "GITHUB_BOT_TOKEN", "GITHUB_TOKEN"):
         token = os.getenv(env_key)
         if token:
@@ -28,6 +30,143 @@ def ghtoken() -> Optional[str]:
 
     print("need a github token")
     sys.exit(1)
+
+
+@dataclass
+class GraphQL:
+    token: str
+    retries: int = 5
+    repo: str = DEFAULT_REPO
+    seconds_between_requests: float = DEFAULT_SECONDS_BETWEEN_REQUESTS
+    seconds_between_writes: float = DEFAULT_SECONDS_BETWEEN_WRITES
+    metadata: str = """
+        id
+        number
+        url
+        createdAt
+        commits(last: 1) {
+          edges {
+            node {
+              commit {
+                committedDate
+                status {
+                  contexts {
+                    context
+                    targetUrl
+                  }
+                }
+              }
+            }
+          }
+        }
+        labels(first: 100) {
+          edges {
+            node {
+              id
+              name
+            }
+          }
+        }
+        reviews(first: 100) {
+          edges {
+            node {
+              state
+              submittedAt
+              author {
+                login
+              }
+            }
+          }
+        }
+    """
+
+    def query(self, query: str) -> Any:
+        headers = {"Authorization": f"token {self.token}"}
+        for _ in range(self.retries):
+            time.sleep(self.seconds_between_writes if "mutation" in query else self.seconds_between_requests)
+            r = requests.post("https://api.github.com/graphql", headers=headers, json={"query": query})
+            if r.status_code == 200:
+                return r.json()
+            logging.warning("Failed to query GraphQL: %s", r.text)
+        raise Exception("Failed to query GraphQL")
+
+    def search_issues(self, filters: str) -> Any:
+        query_template = Template("""
+            query {
+              rateLimit {
+                limit
+                cost
+                remaining
+                resetAt
+              }
+              search(
+                first: 100,
+                query: "repo:$repo $filters",
+                type: ISSUE,
+              ) {
+                issueCount
+                nodes {
+                  ... on PullRequest {
+                    $metadata
+                  }
+                }
+              }
+            }
+        """)
+        query = query_template.substitute(repo=self.repo, filters=filters, metadata=self.metadata)
+        return self.query(query)
+
+    def get_pull(self, number: int) -> Any:
+        query_template = Template("""
+            query {
+              repository(owner: "$owner", name: "$name") {
+                pullRequest(number: $number) {
+                  $metadata
+                }
+              }
+            }
+        """)
+        owner = self.repo.split("/")[0]
+        name = self.repo.split("/")[1]
+        query = query_template.substitute(owner=owner, name=name, number=number, metadata=self.metadata)
+        return self.query(query)["data"]["repository"]["pullRequest"]
+
+    def get_label_id(self, label: str) -> str:
+        query_template = Template("""
+            query {
+              repository(owner: "$owner", name: "$name") {
+                label(name: "$label") {
+                  id
+                }
+              }
+            }
+        """)
+        owner = self.repo.split("/")[0]
+        name = self.repo.split("/")[1]
+        query = query_template.substitute(owner=owner, name=name, label=label)
+        return str(self.query(query)["data"]["repository"]["label"]["id"])
+
+    def add_labels_to_pr(self, pr_id: str, label_ids: list[str]) -> None:
+        query_template = Template("""
+            mutation {
+              addLabelsToLabelable(input: {labelableId: "$pr_id", labelIds: [$label_ids]}) {
+                clientMutationId
+              }
+            }
+        """)
+        query = query_template.substitute(pr_id=pr_id, label_ids=", ".join(f'"{label_id}"' for label_id in label_ids))
+        self.query(query)
+
+    def remove_labels_from_pr(self, pr_id: str, label_ids: list[str]) -> None:
+        query_template = Template("""
+            mutation {
+              removeLabelsFromLabelable(input: {labelableId: "$pr_id", labelIds: [$label_ids]}) {
+                clientMutationId
+              }
+            }
+        """)
+        query = query_template.substitute(pr_id=pr_id, label_ids=", ".join(f'"{label_id}"' for label_id in label_ids))
+        self.query(query)
 
 
 label_dict: dict[int, str] = {
@@ -57,48 +196,55 @@ class Status:
 
 
 @dataclass
-class PrWithApprovals:
-    p_r: PullRequest
+class PrWithGraphQL:
+    g_h_graphql: GraphQL
+    metadata: Any
+    label_ids: dict[str, str]
     dry_run: bool
-    last_commit: Optional[Commit] = None
 
     def get_number(self) -> int:
-        return self.p_r.number
+        return int(self.metadata["number"])
 
     def get_reviews(self) -> list[Review]:
         reviews: list[Review] = []
-        for review in self.p_r.get_reviews():
+        for review in self.metadata["reviews"]["edges"]:
             # can be None if the account has been removed
-            author = review.user.login if review.user is not None else "ghost"
-            reviews.append(Review(author, review.state, review.submitted_at))
+            author = review["node"]["author"]["login"] if review["node"]["author"] else "ghost"
+            submitted_at = datetime.fromisoformat(review["node"]["submittedAt"][:-1])
+            reviews.append(Review(author, review["node"]["state"], submitted_at))
         return reviews
 
     def get_last_commit_date(self) -> Optional[datetime]:
-        commits = list(self.p_r.get_commits())
+        commits = self.metadata["commits"]["edges"]
         if not commits:
             return None
-        self.last_commit = commits[-1]
-        return self.last_commit.commit.committer.date
+        return datetime.fromisoformat(commits[0]["node"]["commit"]["committedDate"][:-1])
 
     def get_last_commit_statuses(self) -> list[Status]:
-        if self.last_commit is None:
+        commits = self.metadata["commits"]["edges"]
+        if not commits or not commits[0]["node"]["commit"]["status"]:
             return []
-        return [Status(status.context, status.target_url) for status in self.last_commit.get_statuses()]
+        contexts = commits[0]["node"]["commit"]["status"]["contexts"]
+        return [Status(context["context"], context["targetUrl"]) for context in contexts]
 
     def get_labels(self) -> set[str]:
-        return {label.name for label in self.p_r.get_labels()}
+        return {label["node"]["name"] for label in self.metadata["labels"]["edges"]}
 
     def add_labels(self, labels: set[str]) -> None:
+        if not labels:
+            return
         for label in labels:
-            logging.info("Adding label '%s' to PR: '%s' %s", label, self.p_r.number, self.p_r.html_url)
-            if not self.dry_run:
-                self.p_r.add_to_labels(label)
+            logging.info("Adding label '%s' to PR: '%s' %s", label, self.metadata["number"], self.metadata["url"])
+        if not self.dry_run:
+            self.g_h_graphql.add_labels_to_pr(self.metadata["id"], [self.label_ids[label] for label in labels])
 
     def remove_labels(self, labels: set[str]) -> None:
+        if not labels:
+            return
         for label in labels:
-            logging.info("Removing label '%s' from PR: '%s' %s", label, self.p_r.number, self.p_r.html_url)
-            if not self.dry_run:
-                self.p_r.remove_from_labels(label)
+            logging.info("Removing label '%s' from PR: '%s' %s", label, self.metadata["number"], self.metadata["url"])
+        if not self.dry_run:
+            self.g_h_graphql.remove_labels_from_pr(self.metadata["id"], [self.label_ids[label] for label in labels])
 
 
 settings = Settings()
@@ -108,7 +254,7 @@ else:
     logging.basicConfig(level=logging.INFO)
 
 
-def get_maintainers(g_h: Github, p_r_object: PrWithApprovals) -> set[str]:
+def get_maintainers(g_h: Github, p_r_object: PrWithGraphQL) -> set[str]:
     maintainers: set[str] = set()
     for status in p_r_object.get_last_commit_statuses():
         if status.context == "ofborg-eval-check-maintainers":
@@ -126,7 +272,7 @@ def get_maintainers(g_h: Github, p_r_object: PrWithApprovals) -> set[str]:
     return maintainers
 
 
-def process_pr(g_h: Github, p_r_object: PrWithApprovals) -> None:
+def process_pr(g_h: Github, p_r_object: PrWithGraphQL) -> None:
     logging.info("Processing %s", p_r_object.get_number())
 
     logging.debug(p_r_object)
@@ -173,21 +319,23 @@ def main() -> None:
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--single_pr", type=int, help="Run on a single PR instead of crawling the repository")
-    parser.add_argument("--enable_throttling", action="store_true", help="Enable default throttling mechanism to mitigate secondary rate limit errors")
     args = parser.parse_args()
 
-    if args.enable_throttling:
-        g_h = Github(ghtoken())
-    else:
-        g_h = Github(ghtoken(), seconds_between_requests=0, seconds_between_writes=0)
+    g_h_token = ghtoken()
+    g_h = Github(g_h_token)
+    g_h_graphql = GraphQL(g_h_token)
 
     if args.dry_run:
         logging.warning("Running in dry run mode, no changes will be applied")
 
+    label_ids = {}
+    for label in label_dict.values():
+        logging.info("Retrieving label id for '%s'", label)
+        label_ids[label] = g_h_graphql.get_label_id(label)
+
     if args.single_pr is not None:
-        repo = g_h.get_repo(args.repo)
-        p_r = repo.get_pull(args.single_pr)
-        process_pr(g_h, PrWithApprovals(p_r, args.dry_run))
+        p_r = g_h_graphql.get_pull(args.single_pr)
+        process_pr(g_h, PrWithGraphQL(g_h_graphql, p_r, label_ids, args.dry_run))
     else:
         query: list[str] = [
             # "author:r-ryantm",
@@ -204,12 +352,19 @@ def main() -> None:
             "is:open",
             f"repo:{args.repo}",
         ]
-        pulls = g_h.search_issues(query=" ".join(query))
+        metadata = g_h_graphql.search_issues(" ".join(query))
+        logging.info("Pulls total: %s", metadata["data"]["search"]["issueCount"])
 
-        logging.info("Pulls total: %s", pulls.totalCount)
-        for p_r_as_issue in pulls:
-            p_r = p_r_as_issue.as_pull_request()
-            process_pr(g_h, PrWithApprovals(p_r, args.dry_run))
+        pulls = metadata["data"]["search"]["nodes"]
+        while pulls:
+            for p_r in pulls:
+                process_pr(g_h, PrWithGraphQL(g_h_graphql, p_r, label_ids, args.dry_run))
+
+            logging.info("Remaining GraphQL API rate limit: %s", metadata["data"]["rateLimit"]["remaining"])
+            logging.info("Remaining REST API rate limit: %s", g_h.get_rate_limit().core.remaining)
+
+            metadata = g_h_graphql.search_issues(f'{" ".join(query)} created:<{pulls[-1]["createdAt"]}')
+            pulls = metadata["data"]["search"]["nodes"]
 
 
 if __name__ == "__main__":
