@@ -254,8 +254,7 @@ else:
     logging.basicConfig(level=logging.INFO)
 
 
-def get_maintainers(g_h: Github, p_r_object: PrWithGraphQL) -> set[str]:
-    maintainers: set[str] = set()
+def get_maintainers(g_h: Github, p_r_object: PrWithGraphQL) -> Optional[set[str]]:
     for status in p_r_object.get_last_commit_statuses():
         if status.context == "ofborg-eval-check-maintainers":
             gist_url = status.target_url
@@ -264,12 +263,14 @@ def get_maintainers(g_h: Github, p_r_object: PrWithGraphQL) -> set[str]:
 
                 gist = g_h.get_gist(gist_id)
                 pot_maint_file_contents = gist.files["Potential Maintainers"].content
+                maintainers: set[str] = set()
                 for line in pot_maint_file_contents.splitlines():
                     if line == "Maintainers:":
                         continue
                     maintainer = line.split(":")[0].strip()
                     maintainers.add(maintainer)
-    return maintainers
+                return maintainers
+    return None
 
 
 def process_pr(g_h: Github, p_r_object: PrWithGraphQL) -> None:
@@ -306,8 +307,10 @@ def process_pr(g_h: Github, p_r_object: PrWithGraphQL) -> None:
             if approval_count:
                 labels.add(label_dict[approval_count])
 
-                maintainers: set[str] = get_maintainers(g_h, p_r_object)
-                if approved_users & maintainers:
+                maintainers = get_maintainers(g_h, p_r_object)
+                if maintainers is None:
+                    old_labels.discard(label_dict[-1])
+                elif approved_users & maintainers:
                     labels.add(label_dict[-1])
 
     p_r_object.remove_labels(old_labels - labels)
