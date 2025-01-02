@@ -84,11 +84,13 @@ class GraphQL:
         headers = {"Authorization": f"token {self.token}"}
         for _ in range(self.retries):
             time.sleep(self.seconds_between_writes if "mutation" in query else self.seconds_between_requests)
-            r = requests.post("https://api.github.com/graphql", headers=headers, json={"query": query})
-            if r.status_code == 200:
+            try:
+                r = requests.post("https://api.github.com/graphql", headers=headers, json={"query": query})
+                r.raise_for_status()
                 return r.json()
-            logging.warning("Failed to query GraphQL: %s", r.text)
-        raise Exception("Failed to query GraphQL")
+            except requests.exceptions.RequestException as e:
+                logging.warning("Failed to query GraphQL: %s", e)
+        raise Exception("Failed to query GraphQL after multiple retries")
 
     def search_issues(self, filters: str) -> Any:
         query_template = Template("""
