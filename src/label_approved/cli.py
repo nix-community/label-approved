@@ -327,9 +327,18 @@ def process_pr(g_h: Github, p_r_object: PrWithGraphQL) -> None:
             approved_users.discard(reviewed_user)
 
     old_labels: set[str] = p_r_object.get_labels() & set(label_dict.values())
+    old_approval_count = 0
+    for i in range(1, max(label_dict.keys()) + 1):
+        if label_dict[i] in old_labels:
+            old_approval_count = i
 
     labels: set[str] = set()
     approval_count = min(len(approved_users), max(label_dict.keys()))
+
+    # if the old approval count is at least the same as the new one,
+    # we consider the labels to be up-to-date, and we skip the PR
+    if old_approval_count >= approval_count:
+        return
 
     if last_approved_review_date is not None:
         last_commit_date = p_r_object.get_last_commit_date()
