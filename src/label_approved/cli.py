@@ -78,6 +78,22 @@ class GraphQL:
             }
           }
         }
+        timelineItems(first: 100) {
+          nodes {
+            __typename
+            ... on ReviewRequestedEvent {
+              actor {
+                login
+              }
+              requestedReviewer {
+                __typename
+              	... on User {
+                  login
+                }
+              }
+            }
+          }
+        }
     """
 
     def query(self, query: str) -> Any:
@@ -87,12 +103,17 @@ class GraphQL:
             try:
                 r = requests.post("https://api.github.com/graphql", headers=headers, json={"query": query})
                 r.raise_for_status()
-                return r.json()
+                metadata = r.json()
+                if "errors" in metadata:
+                    logging.warning("Failed to query GraphQL: %s", metadata["errors"])
+                    continue
+                return metadata
             except requests.exceptions.RequestException as e:
                 logging.warning("Failed to query GraphQL: %s", e)
         raise Exception("Failed to query GraphQL after multiple retries")
 
     def search_issues(self, filters: str) -> Any:
+        batch_size = 50
         query_template = Template("""
             query {
               rateLimit {
@@ -102,7 +123,7 @@ class GraphQL:
                 resetAt
               }
               search(
-                first: 100,
+                first: $batch_size,
                 query: "repo:$repo $filters",
                 type: ISSUE,
               ) {
@@ -115,8 +136,17 @@ class GraphQL:
               }
             }
         """)
-        query = query_template.substitute(repo=self.repo, filters=filters, metadata=self.metadata)
-        return self.query(query)
+        while batch_size:
+            query = query_template.substitute(
+                repo=self.repo, filters=filters, metadata=self.metadata, batch_size=batch_size
+            )
+            if batch_size == 1:
+                return self.query(query)
+            try:
+                return self.query(query)
+            except Exception as e:
+                batch_size //= 2
+                logging.warning("Reducing batch size to %s", batch_size)
 
     def get_pull(self, number: int) -> Any:
         query_template = Template("""
@@ -229,6 +259,29 @@ class PrWithGraphQL:
         contexts = commits[0]["node"]["commit"]["status"]["contexts"]
         return [Status(context["context"], context["targetUrl"]) for context in contexts]
 
+    def get_maintainers(self) -> Optional[set[str]]:
+        has_github_eval = False
+        for status in self.get_last_commit_statuses():
+            # ofborg eval was gone on 2024-12-31
+            # if the status is still there, the PR is too old; no need to update labels
+            if status.context == "ofborg-eval-check-maintainers":
+                return None
+            if status.context == "Eval / Summary":
+                has_github_eval = True
+        # if the GHA eval is not done, do not update labels either
+        if not has_github_eval:
+            return None
+
+        maintainers: set[str] = set()
+        for event in self.metadata["timelineItems"]["nodes"]:
+            if event["__typename"] != "ReviewRequestedEvent":
+                continue
+            if not event["requestedReviewer"] or event["requestedReviewer"]["__typename"] != "User":
+                continue
+            if event["actor"]["login"] == "nix-owners":
+                maintainers.add(event["requestedReviewer"]["login"])
+        return maintainers
+
     def get_labels(self) -> set[str]:
         return {label["node"]["name"] for label in self.metadata["labels"]["edges"]}
 
@@ -256,25 +309,6 @@ else:
     logging.basicConfig(level=logging.INFO)
 
 
-def get_maintainers(g_h: Github, p_r_object: PrWithGraphQL) -> Optional[set[str]]:
-    for status in p_r_object.get_last_commit_statuses():
-        if status.context == "ofborg-eval-check-maintainers":
-            gist_url = status.target_url
-            if gist_url:
-                gist_id = gist_url.rsplit("/", 1)[-1]
-
-                gist = g_h.get_gist(gist_id)
-                pot_maint_file_contents = gist.files["Potential Maintainers"].content
-                maintainers: set[str] = set()
-                for line in pot_maint_file_contents.splitlines():
-                    if line == "Maintainers:":
-                        continue
-                    maintainer = line.split(":")[0].strip()
-                    maintainers.add(maintainer)
-                return maintainers
-    return None
-
-
 def process_pr(g_h: Github, p_r_object: PrWithGraphQL) -> None:
     logging.info("Processing %s", p_r_object.get_number())
 
@@ -285,7 +319,7 @@ def process_pr(g_h: Github, p_r_object: PrWithGraphQL) -> None:
     approved_users: set[str] = set()
     last_approved_review_date = None
     for review in p_r_reviews:
-        reviewed_user = review.author.lower()
+        reviewed_user = review.author
         if review.state == "APPROVED":
             approved_users.add(reviewed_user)
             last_approved_review_date = review.submitted_at
@@ -295,6 +329,8 @@ def process_pr(g_h: Github, p_r_object: PrWithGraphQL) -> None:
     old_labels: set[str] = p_r_object.get_labels() & set(label_dict.values())
 
     labels: set[str] = set()
+    approval_count = min(len(approved_users), max(label_dict.keys()))
+
     if last_approved_review_date is not None:
         last_commit_date = p_r_object.get_last_commit_date()
         # if there are no commits, the PR is closed; no need to update labels
@@ -305,15 +341,18 @@ def process_pr(g_h: Github, p_r_object: PrWithGraphQL) -> None:
         logging.info("lastcommitdate: %s", last_commit_date)
 
         if last_commit_date <= last_approved_review_date:
-            approval_count = min(len(approved_users), max(label_dict.keys()))
             if approval_count:
                 labels.add(label_dict[approval_count])
 
-                maintainers = get_maintainers(g_h, p_r_object)
+                maintainers = p_r_object.get_maintainers()
                 if maintainers is None:
                     old_labels.discard(label_dict[-1])
                 elif approved_users & maintainers:
                     labels.add(label_dict[-1])
+
+    # never remove the maintainer label
+    if label_dict[-1] in old_labels - labels:
+        old_labels.remove(label_dict[-1])
 
     p_r_object.remove_labels(old_labels - labels)
     p_r_object.add_labels(labels - old_labels)
